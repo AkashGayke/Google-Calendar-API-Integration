@@ -108,6 +108,12 @@
 			<artifactId>google-api-services-storage</artifactId>
 			<version>v1-rev20230301-2.0.0</version>
 		</dependency>
+		<dependency>
+			<groupId>com.google.apis</groupId>
+			<artifactId>google-api-services-drive</artifactId>
+			<version>v3-rev20230212-2.0.0</version>
+		</dependency>
+
 	</dependencies>
 	<build>
 		<plugins>

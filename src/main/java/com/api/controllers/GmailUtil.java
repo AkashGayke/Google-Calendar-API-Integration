@@ -19,10 +19,6 @@ class GmailUtil
     {
         Session session = Session.getDefaultInstance(new Properties(), null);
         MimeMessage email = new MimeMessage(session);
-//        email.setFrom(new InternetAddress(from));
-//        email.addRecipient(jakarta.mail.Message.RecipientType.TO, new InternetAddress(to));
-//        email.setSubject(subject);
-//        email.setText(bodyText, "UTF-8");
         MimeMessageHelper helper = new MimeMessageHelper(email, false, "UTF-8");
         helper.setFrom(from, "Akash's API");
         helper.setTo(to);

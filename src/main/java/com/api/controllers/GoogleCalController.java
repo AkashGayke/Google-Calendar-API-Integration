@@ -1,5 +1,6 @@
 package com.api.controllers;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.api.client.auth.oauth2.AuthorizationCodeRequestUrl;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.auth.oauth2.TokenResponse;
@@ -8,6 +9,7 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets.Details;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.InputStreamContent;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.api.client.util.DateTime;
@@ -15,22 +17,23 @@ import com.google.api.services.calendar.Calendar;
 import com.google.api.services.calendar.Calendar.Events;
 import com.google.api.services.calendar.CalendarScopes;
 import com.google.api.services.calendar.model.*;
+import com.google.api.services.drive.Drive;
+import com.google.api.services.drive.DriveScopes;
+import com.google.api.services.drive.model.File;
 import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.GmailScopes;
-import com.google.api.services.gmail.model.Message;
-import jakarta.mail.MessagingException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-
 import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.view.RedirectView;
 
 import java.io.IOException;
@@ -96,12 +99,18 @@ public class GoogleCalController {
         return new ResponseEntity<>(message, HttpStatus.OK);
     }
 
-    @RequestMapping(value = "/login/google/addEvent", method = RequestMethod.POST, params = "code")
-    public ResponseEntity<String> addEvent(@RequestBody EventRequest request, @RequestParam(value = "code") String code) throws MessagingException {
-
+    Drive driveService;
+    @RequestMapping(value = "/login/google/addEvent", method = RequestMethod.POST, params = "code", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<String> addEventWithAttachment(@RequestParam(value = "code") String code,
+                                                         @RequestParam("file") MultipartFile file,
+                                                         @RequestParam("json") String json) throws IOException {
         com.google.api.services.calendar.model.Events eventList;
         String message;
         try {
+
+            // create event object using object mapper
+            ObjectMapper mapper = new ObjectMapper();
+            EventRequest request = mapper.readValue(json, EventRequest.class);
 
             TokenResponse response = flow.newTokenRequest(code).setRedirectUri(redirectURI).execute();
             credential = flow.createAndStoreCredential(response, "userID");
@@ -112,20 +121,16 @@ public class GoogleCalController {
             // Build Google Gmail API client
             Gmail gmailService = new Gmail.Builder(httpTransport, JSON_FACTORY, credential).setApplicationName(APPLICATION_NAME).build();
 
+            // Build Google Drive API client
+            driveService = new Drive.Builder(httpTransport, JSON_FACTORY, credential).setApplicationName(APPLICATION_NAME).build();
+
             // Create a new instance of the Event class
             Event event = new Event();
 
             // Set the values of the Event object using the values from the request body
             event.setSummary(request.getSummary());
             event.setDescription(request.getDescription());
-            // event.setLocation(request.getLocation());
-
-
-              // Set organizer
-//            Event.Organizer eventOrganizer = new Event.Organizer();
-//            eventOrganizer.setEmail(request.getOrganizerEmail());
-//            event.setOrganizer(eventOrganizer);
-
+            event.setAttachments(request.getAttachment());
 
             // Set start time
             DateTime startDateTime = new DateTime(request.getStart());
@@ -161,25 +166,27 @@ public class GoogleCalController {
             ConferenceData conferenceData = new ConferenceData().setCreateRequest(createConferenceRequest);
             event.setConferenceData(conferenceData);
 
+            // Upload file to Google Drive
+            String fileId = uploadFileToDrive(file);
+
+            // Get the name of the uploaded file
+            String fileName = file.getOriginalFilename();
+
+            // Add attachment to the event
+            EventAttachment eventAttachment = new EventAttachment().setFileUrl("https://drive.google.com/uc?id=" + fileId).setMimeType(file.getContentType()).setTitle(fileName);
+            List<EventAttachment> attachments = new ArrayList<>();
+            attachments.add(eventAttachment);
+            event.setAttachments(attachments);
 
             // Insert the new event into the calendar
-            Event createdEvent = client.events().insert("primary", event).setConferenceDataVersion(1).setSendNotifications(true).setSendUpdates("all").execute();
+            Event createdEvent = client.events().insert("primary", event).setConferenceDataVersion(1).setSendNotifications(true).setSendUpdates("all").setSupportsAttachments(true).execute();
 
             System.out.println("Event created: " + createdEvent);
 
             // Retrieve the Google Meet link from the created event
             String meetLink = createdEvent.getHangoutLink();
 
-            // Send a confirmation email
-//            List<String> to = request.getAttendeeEmail();
-//            String from = request.getOrganizerEmail();
-//            String subject = "Invitation: " + event.getSummary();
-
             System.out.println("Google Meet Link :" + meetLink);
-
-
-            // Message message1 = GmailUtil.createEmail(to, from, subject, body);
-            // GmailUtil.sendMessage(gmailService, "me", message1);
 
             return new ResponseEntity<>("Event added successfully.", HttpStatus.OK);
 
@@ -187,6 +194,21 @@ public class GoogleCalController {
             logger.error("Exception while adding event (" + e.getMessage() + ").");
             return new ResponseEntity<>("Error while adding event.", HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    // Helper method to upload file to Google Drive
+    private String uploadFileToDrive(MultipartFile file) throws IOException {
+        File fileMetadata = new File();
+        fileMetadata.setName(file.getOriginalFilename());
+        fileMetadata.setParents(Collections.singletonList("root"));
+
+        InputStreamContent mediaContent = new InputStreamContent(file.getContentType(), file.getInputStream());
+
+        Drive.Files.Create create = driveService.files().create(fileMetadata, mediaContent);
+        create.setFields("id");
+
+        File uploadedFile = create.execute();
+        return uploadedFile.getId();
     }
 
 
@@ -206,6 +228,7 @@ public class GoogleCalController {
             Set<String> scopes = new HashSet<>();
             scopes.add(CalendarScopes.CALENDAR);
             scopes.add(GmailScopes.GMAIL_SEND);
+            scopes.add(DriveScopes.DRIVE_FILE);
             flow = new GoogleAuthorizationCodeFlow.Builder(httpTransport, JSON_FACTORY, clientSecrets, scopes).build();
         }
         authorizationUrl = flow.newAuthorizationUrl().setRedirectUri(redirectURI);
