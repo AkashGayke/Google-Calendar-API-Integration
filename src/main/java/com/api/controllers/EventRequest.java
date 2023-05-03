@@ -21,5 +21,4 @@ public class EventRequest
     private String end;
     private String organizerEmail;
     private List<String> attendeeEmail;
-    private List<EventAttachment> attachment;
 }

@@ -20,6 +20,7 @@ import com.google.api.services.calendar.model.*;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
 import com.google.api.services.drive.model.File;
+import com.google.api.services.drive.model.Permission;
 import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.GmailScopes;
 import jakarta.servlet.http.HttpServletRequest;
@@ -130,7 +131,6 @@ public class GoogleCalController {
             // Set the values of the Event object using the values from the request body
             event.setSummary(request.getSummary());
             event.setDescription(request.getDescription());
-            event.setAttachments(request.getAttachment());
 
             // Set start time
             DateTime startDateTime = new DateTime(request.getStart());
@@ -177,6 +177,13 @@ public class GoogleCalController {
             List<EventAttachment> attachments = new ArrayList<>();
             attachments.add(eventAttachment);
             event.setAttachments(attachments);
+
+            // Modify the file's permission settings to allow anyone with the link to access the file
+            Permission permission = new Permission()
+                    .setType("anyone")
+                    .setRole("reader")
+                    .setAllowFileDiscovery(false);
+            driveService.permissions().create(fileId, permission).execute();
 
             // Insert the new event into the calendar
             Event createdEvent = client.events().insert("primary", event).setConferenceDataVersion(1).setSendNotifications(true).setSendUpdates("all").setSupportsAttachments(true).execute();
